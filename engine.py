@@ -1,21 +1,7 @@
-"""
-Resume Matching Engine — Redrob AI Campus Hackathon
-====================================================
-Builds TF-IDF vectors for 10 resumes, binary vectors for 3 JDs,
-computes cosine similarity, and outputs Top 3 candidates per JD.
-
-Uses only standard libraries (no numpy, pandas, scikit-learn).
-"""
-
 import math
-import re
 from collections import OrderedDict
 
-# ─────────────────────────────────────────────────────────────
-# SKILL_ALIASES  (provided verbatim — do NOT modify)
-# ─────────────────────────────────────────────────────────────
 SKILL_ALIASES = {
-    # Languages
     "python": "python",
     "pyhton": "python",
     "java": "java",
@@ -28,7 +14,6 @@ SKILL_ALIASES = {
     "cpp": "cpp",
     "r": "r",
     "kotlin": "kotlin",
-    # ML / Data
     "machinelearning": "machine_learning",
     "machine learning": "machine_learning",
     "ml": "machine_learning",
@@ -57,7 +42,6 @@ SKILL_ALIASES = {
     "powerbi": "data_visualization",
     "pandas": "pandas",
     "numpy": "numpy",
-    # Web — Frontend
     "react": "react",
     "reacts": "react",
     "reactjs": "react",
@@ -72,7 +56,6 @@ SKILL_ALIASES = {
     "css": "html_css",
     "jest": "jest",
     "graphql": "graphql",
-    # Web — Backend
     "node.js": "nodejs",
     "nodejs": "nodejs",
     "node js": "nodejs",
@@ -83,7 +66,6 @@ SKILL_ALIASES = {
     "rest": "rest_api",
     "restapi": "rest_api",
     "microservices": "microservices",
-    # Databases
     "sql": "sql",
     "mysql": "mysql",
     "mysq": "mysql",
@@ -91,7 +73,6 @@ SKILL_ALIASES = {
     "postgres": "postgresql",
     "mongodb": "mongodb",
     "redis": "redis",
-    # DevOps / Cloud
     "docker": "docker",
     "kubernetes": "kubernetes",
     "kubernates": "kubernetes",
@@ -100,24 +81,18 @@ SKILL_ALIASES = {
     "cicd": "ci_cd",
     "ci cd": "ci_cd",
     "aws": "aws",
-    # Mobile
     "android": "android",
     "firebase": "firebase",
-    # CS Fundamentals
     "algorithms": "algorithms",
     "algoritms": "algorithms",
     "data structure": "data_structures",
     "data structures": "data_structures",
     "competitive programming": "competitive_programming",
-    # Design
     "ui/ux": "ui_ux",
     "ui ux": "ui_ux",
     "figma": "figma",
 }
 
-# ─────────────────────────────────────────────────────────────
-# RESUME DATASET  — 10 Candidates
-# ─────────────────────────────────────────────────────────────
 RESUMES = {
     "Arjun Sharma":   "Pyhton, MachineLearning, SQL, pandas, numpy, Deep-learning",
     "Priya Nair":     "JavaScrpit, Reacts, Node.JS, MongoDb, REST api, HTML/CSS",
@@ -131,10 +106,6 @@ RESUMES = {
     "Meera Iyer":     "python, R, statistics, ML, regression, clustering, Power-BI",
 }
 
-# ─────────────────────────────────────────────────────────────
-# JOB DESCRIPTION DATASET  — 3 JDs
-# (Required + Preferred skills combined for matching)
-# ─────────────────────────────────────────────────────────────
 JOB_DESCRIPTIONS = {
     "JD-1 — Kakao (ML Engineer)": [
         "Python", "Machine Learning", "Deep Learning", "TensorFlow",
@@ -153,15 +124,7 @@ JOB_DESCRIPTIONS = {
 }
 
 
-# ═════════════════════════════════════════════════════════════
-# STEP 1 & 2 — Normalize + Deduplicate Skills
-# ═════════════════════════════════════════════════════════════
-
 def _build_multi_word_aliases():
-    """
-    Separate multi-word alias keys from single-token keys.
-    Multi-word phrases must be matched BEFORE token-level processing.
-    """
     multi = {}
     single = {}
     for raw, canon in SKILL_ALIASES.items():
@@ -169,7 +132,6 @@ def _build_multi_word_aliases():
             multi[raw] = canon
         else:
             single[raw] = canon
-    # Sort multi-word by length descending so longer phrases match first
     multi = OrderedDict(
         sorted(multi.items(), key=lambda kv: len(kv[0]), reverse=True)
     )
@@ -180,34 +142,19 @@ MULTI_WORD_ALIASES, SINGLE_TOKEN_ALIASES = _build_multi_word_aliases()
 
 
 def normalize_skills(raw_skills_str: str) -> list[str]:
-    """
-    Normalize a raw comma-separated skill string into a deduplicated
-    list of canonical skill names.
-
-    Pipeline:
-      1. Lowercase the entire string
-      2. Match & consume multi-word / special-char phrases first
-      3. Split remaining text on commas → single tokens
-      4. Map each token through SKILL_ALIASES
-      5. Discard anything not in the alias map
-      6. Deduplicate (preserve first-seen order)
-    """
     text = raw_skills_str.lower().strip()
     canonical_skills = []
 
-    # --- Phase A: extract multi-word phrases ---
     for phrase, canon in MULTI_WORD_ALIASES.items():
         if phrase in text:
             canonical_skills.append(canon)
-            text = text.replace(phrase, ",")  # consume the phrase
+            text = text.replace(phrase, ",")
 
-    # --- Phase B: process remaining single tokens ---
     tokens = [t.strip() for t in text.split(",") if t.strip()]
     for tok in tokens:
         if tok in SINGLE_TOKEN_ALIASES:
             canonical_skills.append(SINGLE_TOKEN_ALIASES[tok])
 
-    # --- Phase C: deduplicate while preserving order ---
     seen = set()
     deduped = []
     for skill in canonical_skills:
@@ -218,31 +165,14 @@ def normalize_skills(raw_skills_str: str) -> list[str]:
     return deduped
 
 
-# ═════════════════════════════════════════════════════════════
-# STEP 3 — Build Vocabulary
-# ═════════════════════════════════════════════════════════════
-
 def build_vocabulary(all_resume_skills: dict[str, list[str]]) -> list[str]:
-    """
-    Create a shared, alphabetically sorted vocabulary from all
-    normalized + deduplicated resume skills.
-    """
     vocab = set()
     for skills in all_resume_skills.values():
         vocab.update(skills)
     return sorted(vocab)
 
 
-# ═════════════════════════════════════════════════════════════
-# STEP 4 — Compute TF-IDF Vectors for Resumes
-# ═════════════════════════════════════════════════════════════
-
 def compute_tf(skill: str, resume_skills: list[str]) -> float:
-    """
-    TF(skill, resume) = 1 / N   (after deduplication, each skill
-    appears exactly once, so count = 1)
-    N = total unique skills in the resume
-    """
     if skill in resume_skills:
         return 1.0 / len(resume_skills)
     return 0.0
@@ -250,11 +180,6 @@ def compute_tf(skill: str, resume_skills: list[str]) -> float:
 
 def compute_idf(skill: str, all_resume_skills: dict[str, list[str]],
                 total_resumes: int = 10) -> float:
-    """
-    IDF(skill) = ln( 10 / df(skill) )
-    df = number of resumes containing the skill
-    No smoothing.
-    """
     df = sum(1 for skills in all_resume_skills.values() if skill in skills)
     if df == 0:
         return 0.0
@@ -263,9 +188,6 @@ def compute_idf(skill: str, all_resume_skills: dict[str, list[str]],
 
 def build_tfidf_vectors(all_resume_skills: dict[str, list[str]],
                         vocabulary: list[str]) -> dict[str, list[float]]:
-    """
-    For each resume, compute a TF-IDF vector aligned to the vocabulary.
-    """
     vectors = {}
     for name, skills in all_resume_skills.items():
         vec = []
@@ -277,16 +199,10 @@ def build_tfidf_vectors(all_resume_skills: dict[str, list[str]],
     return vectors
 
 
-# ═════════════════════════════════════════════════════════════
-# STEP 5 — Build JD Binary Vectors
-# ═════════════════════════════════════════════════════════════
-
 def normalize_jd_skills(raw_skills: list[str]) -> set[str]:
-    """Normalize each JD skill through the alias map."""
     canonical = set()
     for skill in raw_skills:
         low = skill.lower().strip()
-        # Try multi-word first
         matched = False
         for phrase, canon in MULTI_WORD_ALIASES.items():
             if phrase == low:
@@ -300,15 +216,8 @@ def normalize_jd_skills(raw_skills: list[str]) -> set[str]:
 
 def build_jd_binary_vector(jd_skills: set[str],
                            vocabulary: list[str]) -> list[float]:
-    """
-    Binary vector: 1.0 if the JD mentions the skill, 0.0 otherwise.
-    """
     return [1.0 if term in jd_skills else 0.0 for term in vocabulary]
 
-
-# ═════════════════════════════════════════════════════════════
-# STEP 6 — Cosine Similarity & Ranking
-# ═════════════════════════════════════════════════════════════
 
 def dot_product(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b))
@@ -319,9 +228,6 @@ def magnitude(v: list[float]) -> float:
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
-    """
-    Cosine(A, B) = (A · B) / (|A| × |B|)
-    """
     dot = dot_product(a, b)
     mag_a = magnitude(a)
     mag_b = magnitude(b)
@@ -333,26 +239,15 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 def rank_candidates(resume_vectors: dict[str, list[float]],
                     jd_vector: list[float],
                     top_n: int = 3) -> list[tuple[str, float]]:
-    """
-    Compute cosine similarity for every resume against a JD,
-    sort descending by score, break ties alphabetically by name.
-    Return top N.
-    """
     scores = []
     for name, vec in resume_vectors.items():
         sim = cosine_similarity(vec, jd_vector)
         scores.append((name, round(sim, 2)))
-    # Sort: primary = score descending, secondary = name ascending (ties)
     scores.sort(key=lambda x: (-x[1], x[0]))
     return scores[:top_n]
 
 
-# ═════════════════════════════════════════════════════════════
-# MAIN EXECUTION
-# ═════════════════════════════════════════════════════════════
-
 def main():
-    # ── Step 1 & 2: Normalize + Deduplicate ──────────────────
     all_resume_skills = {}
     print("=" * 65)
     print("  RESUME MATCHING ENGINE — Redrob AI Campus Hackathon")
@@ -364,19 +259,16 @@ def main():
         all_resume_skills[name] = skills
         print(f"  {name:20s} → {skills}")
 
-    # ── Step 3: Build Vocabulary ─────────────────────────────
     vocabulary = build_vocabulary(all_resume_skills)
     print(f"\n── Step 3: Shared Vocabulary ({len(vocabulary)} skills) ──\n")
     print(f"  {vocabulary}\n")
 
-    # ── Step 4: Compute TF-IDF Vectors ───────────────────────
     resume_vectors = build_tfidf_vectors(all_resume_skills, vocabulary)
     print("── Step 4: TF-IDF Vectors (sample — first 5 terms) ──\n")
     for name, vec in resume_vectors.items():
         preview = [f"{v:.4f}" for v in vec[:5]]
         print(f"  {name:20s} → [{', '.join(preview)}, ...]")
 
-    # ── Step 5 & 6: JD Vectors → Cosine Similarity → Rank ───
     print("\n" + "=" * 65)
     print("  RESULTS — Top 3 Candidates per Job Description")
     print("=" * 65)
